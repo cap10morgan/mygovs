@@ -21,6 +21,7 @@ import cgi
 import wsgiref.handlers
 import os
 import re
+from datetime import datetime
 
 from google.appengine.api import users
 from google.appengine.ext import webapp
@@ -59,24 +60,64 @@ class Comment(Chatter):
   display_in_list = False
   
 class CommunityItemHandler(webapp.RequestHandler):
+  def get(self):
+    items_query = CommunityItem.all().order('-creation_date')
+    items = items_query.fetch(10)
+
+    if users.get_current_user():
+      url = users.create_logout_url(self.request.uri)
+      url_linktext = 'Logout'
+    else:
+      url = users.create_login_url(self.request.uri)
+      url_linktext = 'Login'
+      
+    content_type = self.get_content_type_from_url()
+      
+    if content_type == 'plist':
+      #self.response.out.write('<ul>\n')
+      #for item in items:
+        #self.response.out.write('<li>%s</li>\n' % item)
+      #self.response.out.write('</ul>\n')
+      plist = plistlib.writePlistToString(items)
+      self.response.out.write(plist)
+    elif content_type == 'xml':
+      pass
+      # TODO: send back Atom
+    elif content_type == 'html':
+      pass
+      # TODO: send back templated html
+    
   def post(self):
     communityItem = CommunityItem()
+    self.add(communityItem)
+    self.redirect('/community/')
 
+  def add(self,communityItem):
     if users.get_current_user():
       communityItem.creator = users.get_current_user()
 
     communityItem.content = self.request.get('content')
-    #communityItem.creation_date = 0 # TODO
+    communityItem.creation_date = datetime.now()
     communityItem.put()
-    self.redirect('/')
+    
+  def get_content_type_from_url(self):
+    url = self.request.path_info
+    ctype_regexp = re.compile(r'.*/items\.([^\.]+)')
+    matches = ctype_regexp.match(url)
+    content_type = matches.group(1)
+    return content_type
+    
+  def get_id_from_url(self):
+    url = self.request.path_info
+    id_regexp = re.compile(r'.*/(?:item|event|chatter)/([^/]+)')
+    matches = id_regexp.match(url)
+    the_id = matches.group(1)
+    return the_id
     
   def delete(self):
-    url = self.request.path_info
-    id_regexp = re.compile(r'/item/([^/]+)')
-    matches = id_regexp.match(url)
-    deleteId = matches.group(1)
+    delete_id = self.get_id_from_url()
     #self.response.out.write('Deleting item %s' % deleteId)
-    item = db.get(deleteId)
+    item = db.get(delete_id)
     item.delete()
     
 class TestHandler(webapp.RequestHandler):
@@ -91,54 +132,37 @@ class TestHandler(webapp.RequestHandler):
       'url': url,
       'url_linktext': url_linktext,
     }
-    path = os.path.join(os.path.dirname(__file__), 'index.html')
+    path = os.path.join(os.path.dirname(__file__), 'test.html')
     self.response.out.write(template.render(path, template_values))
-
-class MainHandler(webapp.RequestHandler):
-  def get(self):
-    #self.response.out.write('<h1>Hello?</h1>')
-    # should use Atom someday, but for now we'll use plists because it's
-    # easier with the iPhone SDK
-    #self.response.out.write('<?xml version="1.0" encoding="UTF-8"?>\n\n')
-    #self.response.out.write('<feed xmlns="http://www.w3.org/2005/Atom">')
     
-    # need to figure out how to get all items created after a given item
+class EventHandler(CommunityItemHandler):
+  def post(self):
+    event = Event()
+    event.date = datetime.strptime(self.request.get('date'),'%Y-%m-%d %H-%M-%S')
+    event.location = self.request.get('location')
+    self.add(event)
     
-    items_query = CommunityItem.all().order('-creation_date')
-    items = items_query.fetch(10)
+class ChatterHandler(CommunityItemHandler):
+  def post(self):
+    chatter = Chatter()
+    chatter.parent_item = db.get(self.request.get('parent_item'))
+    self.add(chatter)
     
-    if users.get_current_user():
-      url = users.create_logout_url(self.request.uri)
-      url_linktext = 'Logout'
-    else:
-      url = users.create_login_url(self.request.uri)
-      url_linktext = 'Login'
-    
-    #self.response.out.write('<ul>\n')
-    #for item in items:
-      #self.response.out.write('<li>%s</li>\n' % item)
-    #self.response.out.write('</ul>\n')
-    
-    plist = plistlib.writePlistToString(items)
-    self.response.out.write(plist)
-      
-    #template_values = {
-    #  'greetings': greetings,
-    #  'url': url,
-    #  'url_linktext': url_linktext,
-    #}
-    
-    #path = os.path.join(os.path.dirname(__file__), 'index.html')
-    #self.response.out.write(template.render(path, template_values))
-    
+class CommentHandler(CommunityItemHandler):
+  def post(self):
+    parent_id = self.get_id_from_url()
+    comment = Comment()
+    comment.parent_item = db.get(parent_id)
+    self.add(comment)
 
 def main():
-  application = webapp.WSGIApplication([('/', MainHandler),
-                                        ('/test', TestHandler),
-                                        ('/item/.*', CommunityItemHandler),
-                                        #('/event', EventHandler),
-                                        #('/chatter', ChatterHandler),
-                                        #('/item/*/comment', CommentHandler),
+  application = webapp.WSGIApplication([('/community/', CommunityItemHandler),
+                                        (r'/community/items\.[^\.]+',CommunityItemHandler),
+                                        ('/community/test', TestHandler),
+                                        ('/community/item/.*', CommunityItemHandler),
+                                        ('/community/event/.*', EventHandler),
+                                        ('/community/chatter/.*', ChatterHandler),
+                                        ('/community/item/[^/]+/comment', CommentHandler),
                                        ],
                                          debug=True)
   run_wsgi_app(application)
