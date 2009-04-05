@@ -20,6 +20,7 @@
 import cgi
 import wsgiref.handlers
 import os
+import re
 
 from google.appengine.api import users
 from google.appengine.ext import webapp
@@ -41,6 +42,7 @@ class CommunityItem(db.Model):
     
   def serialize(self):
     selfDict = dict()
+    selfDict['id'] = str(self.key())
     selfDict['creator'] = self.creator
     selfDict['content'] = self.content
     selfDict['creation_date'] = str(self.creation_date)
@@ -67,6 +69,15 @@ class CommunityItemHandler(webapp.RequestHandler):
     #communityItem.creation_date = 0 # TODO
     communityItem.put()
     self.redirect('/')
+    
+  def delete(self):
+    url = self.request.path_info
+    id_regexp = re.compile(r'/item/([^/]+)')
+    matches = id_regexp.match(url)
+    deleteId = matches.group(1)
+    #self.response.out.write('Deleting item %s' % deleteId)
+    item = db.get(deleteId)
+    item.delete()
     
 class TestHandler(webapp.RequestHandler):
   def get(self):
@@ -124,7 +135,7 @@ class MainHandler(webapp.RequestHandler):
 def main():
   application = webapp.WSGIApplication([('/', MainHandler),
                                         ('/test', TestHandler),
-                                        ('/item', CommunityItemHandler),
+                                        ('/item/.*', CommunityItemHandler),
                                         #('/event', EventHandler),
                                         #('/chatter', ChatterHandler),
                                         #('/item/*/comment', CommentHandler),
