@@ -84,8 +84,20 @@ class CommunityItemHandler(webapp.RequestHandler):
       pass
       # TODO: send back Atom
     elif content_type == 'html':
-      pass
-      # TODO: send back templated html
+      if users.get_current_user():
+        url = users.create_logout_url(self.request.uri)
+        url_linktext = 'Logout'
+      else:
+        url = users.create_login_url(self.request.uri)
+        url_linktext = 'Login'
+      
+      template_values = {
+        'url': url,
+        'url_linktext': url_linktext,
+        'items': items,
+      }
+      path = os.path.join(os.path.dirname(__file__), 'items.html')
+      self.response.out.write(template.render(path, template_values))
     
   def post(self):
     communityItem = CommunityItem()
@@ -104,7 +116,10 @@ class CommunityItemHandler(webapp.RequestHandler):
     url = self.request.path_info
     ctype_regexp = re.compile(r'.*/items\.([^\.]+)')
     matches = ctype_regexp.match(url)
-    content_type = matches.group(1)
+    if matches != None:
+      content_type = matches.group(1)
+    else:
+      content_type = 'html'
     return content_type
     
   def get_id_from_url(self):
