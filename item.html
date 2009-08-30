@@ -1,0 +1,38 @@
+<html>
+  <head>
+    <title>MyGov Mobile</title>
+    <link type="text/css" rel="stylesheet" href="/stylesheets/main.css" />
+  </head>
+  <body>
+    <form action="/community/item/" method="put">
+      <input type="hidden" name="continue_url" value="{{ continue_url }}" />
+      <input type="hidden" name="key" value="{{ item.key|escape }}" />
+      <div>Subject: <input type="text" name="subject" value="{{ item.subject|escape }}" /></div>
+      <div>Message: <textarea name="message" rows="3" cols="60">{{ item.message|escape }}</textarea></div>
+      <div>URL: <input type="text" name="exturl" value="{{ item.exturl|escape }}" /></div>
+      <div>Title: <input type="text" name="exturl_title" value="{{ item.exturl_title|escape }}" /></div>
+      <div>App URL: <input type="text" name="appurl" value="{{ item.appurl|escape }}" /></div>
+      <div>App URL Title: <input type="text" name="appurl_title" value="{{ item.appurl_title|escape }}" /></div>
+      <div><input type="submit" value="Update Item" /></div>
+    </form>
+    
+    <a href="{{ google_url }}">{{ google_url_linktext }}</a>
+    
+    <div id="comment-form">
+      <p>New Comment:</p>
+      <form action="/community/item/{{ item.key|escape }}/comment" method="post">
+        <div><input type="text" name="subject" /></div>
+        <div><textarea name="message" rows="3" cols="60"></textarea></div>
+        <div><input type="submit" value="Add Comment" /></div>
+      </form>
+    </div>
+    
+    <div id="comments">
+      <ul>
+      {% for comment in comments %}
+        <li>{{ comment.subject|escape }} : {{ comment.message|escape }}</li>
+      {% endfor %}
+      </ul>
+    </div>
+  </body>
+</html>

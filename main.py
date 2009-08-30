@@ -27,94 +27,198 @@ from google.appengine.api import users
 from google.appengine.ext import webapp
 from google.appengine.ext.webapp.util import run_wsgi_app
 from google.appengine.ext import db
+from google.appengine.ext.db import polymodel
 from google.appengine.ext.webapp import template
 
 import plistlib
 
-class CommunityItem(db.Model):
+class CommunityItem(polymodel.PolyModel):
   creator = db.UserProperty()
-  content = db.StringProperty(multiline=True)
+  message = db.StringProperty(multiline=True)
+  subject = db.StringProperty(multiline=False)
+  exturl = db.StringProperty(multiline=False)
+  appurl = db.StringProperty(multiline=False)
+  exturl_title = db.StringProperty(multiline=False)
+  appurl_title = db.StringProperty(multiline=False)
   creation_date = db.DateTimeProperty(auto_now_add=True)
-  display_in_list = True
+  display_in_list = db.BooleanProperty(default=True)
   
   def __str__(self):
-    #return '(' + self.creation_date.isoformat() + ') ' + self.creator + ': ' + self.content
-    return self.content
+    return self.message
     
   def serialize(self):
     selfDict = dict()
-    selfDict['id'] = str(self.key())
-    selfDict['creator'] = self.creator
-    selfDict['content'] = self.content
+    selfDict['id']            = str(self.key())
+    selfDict['creator']       = str(self.creator)
+    selfDict['message']       = self.message
+    selfDict['subject']       = self.subject
+    selfDict['exturl']        = self.exturl
+    selfDict['appurl']        = self.appurl
+    selfDict['exturl_title']  = self.exturl_title
+    selfDict['appurl_title']  = self.appurl_title
     selfDict['creation_date'] = str(self.creation_date)
     return selfDict
 
 class Event(CommunityItem):
-  date = db.DateTimeProperty()
-  location = db.GeoPtProperty()
+  event_date    = db.DateTimeProperty()
+  location      = db.GeoPtProperty()
+  location_desc = db.StringProperty(multiline=False)
+  # TODO: Figure out how to store these
+  #attendees = db.ArrayOfGoogleAccounts()
+  
+  def serialize(self):
+    selfDict = super(Event, self).serialize
+    selfDict['event_date']    = self.event_date
+    selfDict['location']      = self.location
+    selfDict['location_desc'] = self.location_desc
+    return selfDict
+    
 
 class Chatter(CommunityItem):
-  parent_item = db.ReferenceProperty(CommunityItem)
+  pass
   
 class Comment(Chatter):
-  display_in_list = False
+  # this doesn't work, but I'd like to set it here
+  #self.display_in_list = False
+  pass
   
 class CommunityItemHandler(webapp.RequestHandler):
-  def get(self):
-    items_query = CommunityItem.all().order('-creation_date')
-    items = items_query.fetch(10)
-
+  def get_item(self,item):
+    if item == None:
+      return None
+    continue_url = self.request.get('continue_url')
     if users.get_current_user():
-      url = users.create_logout_url(self.request.uri)
-      url_linktext = 'Logout'
+      google_url = users.create_logout_url(self.request.uri)
+      google_url_linktext = 'Logout'
     else:
-      url = users.create_login_url(self.request.uri)
-      url_linktext = 'Login'
+      if continue_url:
+        google_url = users.create_login_url(continue_url)
+      else:
+        google_url = users.create_login_url(self.request.uri)
+      google_url_linktext = 'Login'
       
     content_type = self.get_content_type_from_url()
-      
+    
     if content_type == 'plist':
-      #self.response.out.write('<ul>\n')
-      #for item in items:
-        #self.response.out.write('<li>%s</li>\n' % item)
-      #self.response.out.write('</ul>\n')
-      plist = plistlib.writePlistToString(items)
+      google_url_data = { 'url' : google_url, 'url_linktext' : google_url_linktext }
+      data = { 'item' : item, 'google_urls' : google_url_data }
+      plist = plistlib.writePlistToString(data)
       self.response.out.write(plist)
     elif content_type == 'xml':
       pass
       # TODO: send back Atom
     elif content_type == 'html':
-      if users.get_current_user():
-        url = users.create_logout_url(self.request.uri)
-        url_linktext = 'Logout'
-      else:
-        url = users.create_login_url(self.request.uri)
-        url_linktext = 'Login'
-      
+      comments = Comment.all().ancestor(item.key())
       template_values = {
-        'url': url,
-        'url_linktext': url_linktext,
+        'google_url': google_url,
+        'google_url_linktext': google_url_linktext,
+        'continue_url' : continue_url,
+        'item': item,
+        'comments' : comments,
+      }
+      path = os.path.join(os.path.dirname(__file__), 'item.html')
+      self.response.out.write(template.render(path, template_values))
+  
+  def get(self):
+    item_id = self.get_id_from_url()
+    if (item_id):
+      return self.get_item(CommunityItem.get(item_id))
+    
+    items_offset = self.request.get('items_offset')
+    if (items_offset.isdigit()):
+      items_offset = int(items_offset)
+    else:
+      items_offset = 0
+    items_limit = self.request.get('items_limit')
+    if (items_limit.isdigit()):
+      items_limit = int(items_limit)
+    else:
+      items_limit = 30
+    not_older_than = self.request.get('not_older_than')
+    if (not not_older_than):
+      not_older_than = '2009-01-01'
+    not_older_than = datetime.strptime(not_older_than,'%Y-%m-%d')
+    
+    items = self.retrieve_items(not_older_than,items_limit,items_offset)
+
+    continue_url = self.request.get('continue_url')
+    if users.get_current_user():
+      google_url = users.create_logout_url(self.request.uri)
+      google_url_linktext = 'Logout'
+    else:
+      if continue_url:
+        google_url = users.create_login_url(continue_url)
+      else:
+        google_url = users.create_login_url(self.request.uri)
+      google_url_linktext = 'Login'
+      
+    content_type = self.get_content_type_from_url()
+      
+    if content_type == 'plist':
+      google_url_data = { 'url' : google_url, 'url_linktext' : google_url_linktext }
+      data = { 'items' : items, 'google_urls' : google_url_data }
+      plist = plistlib.writePlistToString(data)
+      self.response.out.write(plist)
+    elif content_type == 'xml':
+      pass
+      # TODO: send back Atom
+    elif content_type == 'html':
+      template_values = {
+        'google_url': google_url,
+        'google_url_linktext': google_url_linktext,
+        'continue_url' : continue_url,
+        'not_older_than' : not_older_than,
         'items': items,
       }
       path = os.path.join(os.path.dirname(__file__), 'items.html')
       self.response.out.write(template.render(path, template_values))
     
+  def retrieve_items(self,not_older_than,limit = 1000,offset = 0):
+    models = { 'CommunityItemHandler' : CommunityItem,
+               'EventHandler'         : Event,
+               'ChatterHandler'       : Chatter,
+               'CommentHandler'       : Comment }
+    klass = models[self.__class__.__name__]
+    items_query = klass.all().filter('display_in_list =', True).filter("creation_date >=", not_older_than).order("-creation_date")
+    return items_query.fetch(limit,offset)
+    
   def post(self):
-    communityItem = CommunityItem()
-    self.add(communityItem)
-    self.redirect('/community/')
-
-  def add(self,communityItem):
     if users.get_current_user():
-      communityItem.creator = users.get_current_user()
+      community_item = CommunityItem()
+      self.store(community_item)
+      self.redirect('/community/')
+    
+  def put(self):
+    user = users.get_current_user()
+    if user:
+      item_id = self.get_id_from_url()
+      if (item_id):
+        community_item = CommunityItem.get_by_id(item_id)
+        if (community_item):
+          if (user == community_item.creator):
+            self.store(community_item)
+          else:
+            # TODO: Throw back some kind of unauthorized error
+            pass
 
-    communityItem.content = self.request.get('content')
-    communityItem.creation_date = datetime.now()
-    communityItem.put()
+  def store(self,community_item):
+    if users.get_current_user():
+      community_item.creator = users.get_current_user()
+
+    community_item.message      = self.request.get('message')
+    community_item.subject      = self.request.get('subject')
+    community_item.exturl       = self.request.get('exturl')
+    community_item.exturl_title = self.request.get('exturl_title')
+    community_item.appurl       = self.request.get('appurl')
+    community_item.appurl_title = self.request.get('appurl_title')
+    
+    # TODO: Should I figure out the subclasses' fields here?
+    
+    community_item.put()
     
   def get_content_type_from_url(self):
     url = self.request.path_info
-    ctype_regexp = re.compile(r'.*/items\.([^\.]+)')
+    ctype_regexp = re.compile(r'.*/(?:items?|events?|chatter|comments?)\.([^\.]+)')
     matches = ctype_regexp.match(url)
     if matches != None:
       content_type = matches.group(1)
@@ -126,14 +230,20 @@ class CommunityItemHandler(webapp.RequestHandler):
     url = self.request.path_info
     id_regexp = re.compile(r'.*/(?:item|event|chatter)/([^/]+)')
     matches = id_regexp.match(url)
-    the_id = matches.group(1)
-    return the_id
+    if matches != None:
+      the_id = matches.group(1)
+      return the_id
+    else:
+      return None
     
   def delete(self):
-    delete_id = self.get_id_from_url()
-    #self.response.out.write('Deleting item %s' % deleteId)
-    item = db.get(delete_id)
-    item.delete()
+    user = users.get_current_user()
+    if user:
+      delete_id = self.get_id_from_url()
+      #self.response.out.write('Deleting item %s' % deleteId)
+      item = db.get(delete_id)
+      if user == item.creator:
+        item.delete()
     
 class TestHandler(webapp.RequestHandler):
   def get(self):
@@ -152,32 +262,81 @@ class TestHandler(webapp.RequestHandler):
     
 class EventHandler(CommunityItemHandler):
   def post(self):
-    event = Event()
-    event.date = datetime.strptime(self.request.get('date'),'%Y-%m-%d %H-%M-%S')
-    event.location = self.request.get('location')
-    self.add(event)
+    if users.get_current_user():
+      event = Event()
+      event.event_date = datetime.strptime(self.request.get('event_date'),'%Y-%m-%d %H-%M-%S')
+      event.location = self.request.get('location')
+      event.location_desc = self.request.get('location_desc')
+      self.store(event)
+    
+  def get(self):
+    super(EventHandler, self).get()
     
 class ChatterHandler(CommunityItemHandler):
   def post(self):
-    chatter = Chatter()
-    chatter.parent_item = db.get(self.request.get('parent_item'))
-    self.add(chatter)
+    if users.get_current_user():
+      parent = CommunityItem.get(self.request.get('parent_item'))
+      chatter = Chatter(parent,'Chatter')
+      self.store(chatter)
     
 class CommentHandler(CommunityItemHandler):
   def post(self):
+    if users.get_current_user():
+      parent_id = self.get_id_from_url()
+      parent = CommunityItem.get(parent_id)
+      comment = Comment(parent)
+      # should really handle this in the model class's constructor, oh well
+      comment.display_in_list = False
+      self.store(comment)
+      self.redirect("/community/item/")
+    
+  def get(self):
     parent_id = self.get_id_from_url()
-    comment = Comment()
-    comment.parent_item = db.get(parent_id)
-    self.add(comment)
+    parent = CommunityItem.get(parent_id)
+    content_type = self.get_content_type_from_url()
+    
+    items = Comment.all().ancestor(parent)
+    items = items.fetch(30)
+    
+    continue_url = self.request.get('continue_url')
+    if users.get_current_user():
+      google_url = users.create_logout_url(self.request.uri)
+      google_url_linktext = 'Logout'
+    else:
+      if continue_url:
+        google_url = users.create_login_url(continue_url)
+      else:
+        google_url = users.create_login_url(self.request.uri)
+      google_url_linktext = 'Login'
+    
+    if content_type == 'plist':
+      google_url_data = { 'url' : google_url, 'url_linktext' : google_url_linktext }
+      data = { 'items' : items, 'google_urls' : google_url_data }
+      plist = plistlib.writePlistToString(data)
+      self.response.out.write(plist)
+    elif content_type == 'xml':
+      pass
+      # TODO: send back Atom
+    elif content_type == 'html':
+      template_values = {
+        'google_url': google_url,
+        'google_url_linktext': google_url_linktext,
+        'continue_url' : continue_url,
+        #'not_older_than' : not_older_than,
+        'items': items,
+      }
+      path = os.path.join(os.path.dirname(__file__), 'items.html')
+      self.response.out.write(template.render(path, template_values))
+    
 
 def main():
   application = webapp.WSGIApplication([('/community/', CommunityItemHandler),
                                         (r'/community/items\.[^\.]+',CommunityItemHandler),
                                         ('/community/test', TestHandler),
+                                        ('/community/item/[^/]+/comment(?:s?\.\w+)?', CommentHandler),
                                         ('/community/item/.*', CommunityItemHandler),
                                         ('/community/event/.*', EventHandler),
                                         ('/community/chatter/.*', ChatterHandler),
-                                        ('/community/item/[^/]+/comment', CommentHandler),
                                        ],
                                          debug=True)
   run_wsgi_app(application)

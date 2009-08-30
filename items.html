@@ -5,15 +5,22 @@
   </head>
   <body>
     <form action="/community/item/" method="post">
-      <div><textarea name="content" rows="3" cols="60"></textarea></div>
+      <input type="hidden" name="continue_url" value="{{ continue_url }}" />
+      <input type="hidden" name="not_older_than" value="{{ not_older_than }}" />
+      <div>Subject: <input type="text" name="subject" /></div>
+      <div>Message: <textarea name="message" rows="3" cols="60"></textarea></div>
+      <div>URL: <input type="text" name="exturl" /></div>
+      <div>Title: <input type="text" name="exturl_title" /></div>
+      <div>App URL: <input type="text" name="appurl" /></div>
+      <div>App URL Title: <input type="text" name="appurl_title" /></div>
       <div><input type="submit" value="Add Item" /></div>
     </form>
     
-    <a href="{{ url }}">{{ url_linktext }}</a>
+    <a href="{{ google_url }}">{{ google_url_linktext }}</a>
     
     <ul>
     {% for item in items %}
-      <li>{{ item.content|escape }}</li>
+      <li><a href="/community/item/{{ item.key|escape }}">{{ item.subject|escape }}</a> : {{ item.message|escape }} - {{ item.creation_date|escape }}<br /><a href="{{ item.exturl }}">{{ item.exturl_title|escape }}</a><br /><a href="{{ item.appurl }}">{{ item.appurl_title|escape }}</a></li>
     {% endfor %}
     </ul>
     
